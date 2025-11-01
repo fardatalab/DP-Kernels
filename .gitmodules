@@ -1,0 +1,7 @@
+[submodule "Apps/Faster/FASTER"]
+	path = Apps/Faster/FASTER
+	url = git@github.com:microsoft/FASTER.git
+[submodule "Apps/Storage/DDS"]
+	path = Apps/Storage/DDS
+	url = git@github.com:fardatalab/DDS.git
+	branch = linux
