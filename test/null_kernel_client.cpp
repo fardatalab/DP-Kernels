@@ -1,0 +1,181 @@
+#include "dpm_interface.hpp"
+#include <atomic>
+#include <cstdio>
+#include <iostream>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+#define LOOPS 10000000
+#define DEPTH 8
+#define OUTPUT_SIZE 4096
+#define INPUT_FILE "4K.deflate"
+
+int INPUT_SIZE = 4096;
+char *input_buf = NULL;
+
+// Global statistics
+std::atomic<ulong> total_submitted(0);
+std::atomic<ulong> total_completed(0);
+std::atomic<double> max_thread_time(0.0); // Add this line
+
+void worker_thread(int thread_id, int num_threads)
+{
+    dpkernel_task_base *task;
+    bool ret;
+    ulong submitted_cnt = 0;
+    ulong completed_cnt = 0;
+
+    // Each thread handles LOOPS/num_threads iterations
+    const ulong loops_per_thread = LOOPS / num_threads;
+
+    std::vector<dpkernel_task_base *> task_list;
+    for (int i = 0; i < DEPTH; ++i)
+    {
+        dpkernel_task_base *temp_task = nullptr;
+        if (!app_alloc_task_request(&temp_task))
+        {
+            printf("Thread %d: Failed to allocate task %d\n", thread_id, i);
+            return;
+        }
+        temp_task->in_size = INPUT_SIZE;
+        temp_task->out_size = OUTPUT_SIZE;
+        temp_task->name = dpkernel_name::NULL_KERNEL;
+
+        ret = dpm_alloc_input_buf(temp_task->in_size, &temp_task->in);
+        if (!ret)
+        {
+            printf("Thread %d: Failed to allocate input buf\n", thread_id);
+            break;
+        }
+
+        ret = dpm_alloc_output_buf(OUTPUT_SIZE, &temp_task->out);
+        if (!ret)
+        {
+            printf("Thread %d: Failed to allocate output buf\n", thread_id);
+            break;
+        }
+        task_list.push_back(temp_task);
+    }
+
+    // Start timing here
+    auto thread_start = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < DEPTH; ++i)
+    {
+        task = task_list[i];
+        ret = dpm_submit_task_msgq(task);
+        if (!ret)
+        {
+            printf("Thread %d: Failed to submit task\n", thread_id);
+            break;
+        }
+        else
+        {
+            submitted_cnt++;
+            total_submitted++;
+        }
+    }
+
+    while (completed_cnt < loops_per_thread)
+    {
+        for (int i = 0; i < DEPTH; ++i)
+        {
+            task = task_list[i];
+            if (task->completion.load() == DPK_SUCCESS)
+            {
+                completed_cnt++;
+                total_completed++;
+
+                /* if (completed_cnt >= loops_per_thread)
+                {
+                    break;
+                } */
+
+                if (submitted_cnt < loops_per_thread)
+                {
+                    ret = dpm_submit_task_msgq(task);
+                    if (!ret)
+                    {
+                        printf("Thread %d: Failed to submit task\n", thread_id);
+                        break;
+                    }
+                    else
+                    {
+                        submitted_cnt++;
+                        total_submitted++;
+                    }
+                }
+            }
+        }
+    }
+
+    // End timing here
+    auto thread_end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> thread_elapsed = thread_end - thread_start;
+
+    // Update max_thread_time if this thread took longer
+    double current_max = max_thread_time.load();
+    printf("thread %d elapsed time: %f\n", thread_id, thread_elapsed.count());
+    while (thread_elapsed.count() > current_max &&
+           !max_thread_time.compare_exchange_strong(current_max,
+                                                    thread_elapsed.count()))
+      ;
+
+    // Clean up tasks
+    for (auto task : task_list)
+    {
+        // get local ptr from shm ptr of in and out buffers
+        char *in = app_get_input_ptr_from_shmptr(task->in);
+        char *out = app_get_output_ptr_from_shmptr(task->out);
+        dpm_free_input_buf(in);
+        dpm_free_output_buf(out);
+    }
+    printf("thread %d finished\n", thread_id);
+}
+
+int main(int argc, char *argv[])
+{
+    int num_threads = 1; // default to 1 thread
+    if (argc > 1)
+    {
+        num_threads = std::atoi(argv[1]);
+    }
+
+    // Initialize DPM
+    dpm_initialize();
+    printf("dpm init completed\n");
+
+    std::vector<std::thread> threads;
+
+    // Remove or comment out the start timing here
+    // auto start = std::chrono::high_resolution_clock::now();
+
+    // Create threads
+    for (int i = 0; i < num_threads; i++)
+    {
+        threads.emplace_back(worker_thread, i, num_threads);
+    }
+
+    auto all_start = std::chrono::high_resolution_clock::now();
+    // Wait for all threads to complete
+    for (auto &thread : threads)
+    {
+        thread.join();
+    }
+    auto all_end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> all_elapsed = all_end - all_start;
+    printf("All threads finished, time = %f\n", all_elapsed.count());
+
+    // Use max_thread_time instead of overall time
+    double elapsed_time = max_thread_time.load();
+
+    printf("Total submitted tasks: %lu\n", total_submitted.load());
+    printf("Total completed tasks: %lu\n", total_completed.load());
+    std::cout << "Max thread time: " << elapsed_time << " s\n";
+
+    double throughput_million_ops = (double)total_completed.load() / elapsed_time / 1000000;
+    printf("Throughput: %.6f million ops/s\n", throughput_million_ops);
+
+    return 0;
+}
