@@ -1,0 +1,8 @@
+[submodule "Apps/Faster/FASTER"]
+	path = Apps/Faster/FASTER
+	url = git@github.com:microsoft/FASTER.git
+
+[submodule "Apps/DuckDB/NetworkEngine"]
+	path = Apps/DuckDB/NetworkEngine
+	url = git@github.com:fardatalab/NetworkEngine.git
+	branch = bf3v2.2-regex-app
