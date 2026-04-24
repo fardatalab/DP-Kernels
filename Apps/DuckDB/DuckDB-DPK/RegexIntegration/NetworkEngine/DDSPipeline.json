@@ -1,0 +1,49 @@
+{
+	"doca_dpdk_flags": {
+		// -a - Add a device to the allow list.
+		"devices": [
+			{
+				"device": "sf",
+				"id": "2", //4
+				"sft": false
+			},
+		],
+		// -c - Hexadecimal bitmask of cores to run on
+		"core-mask": "0xFF",
+		// Additional DPDK (EAL) flags (if needed)
+		"flags": "--no-shconf --huge-unlink --base-virtaddr=0x200000000000 --match-allocations",
+	},
+	"doca_general_flags": {
+		// -l - sets the log level for the application DEBUG=60 CRITICAL=20
+		"log-level": 60,
+	},
+	"doca_program_flags": {
+		// -s - Set application signature ([client] [host] [Proto])
+		"app-sig": "10.10.1.100/32:* 10.10.1.101/32:3232 TCP", //"192.168.200.133/32:* 192.168.200.132/32:3232 TCP",
+		// !!UNUSED!! -o - Set offload predicate file path
+		// "udf-path": "../OffloadEngine/UDFSamples/",
+		// -h - Set host MAC address
+		"host-mac": "9c:63:c0:1c:9c:5c", //"b8:3f:d2:04:e2:5c",
+		// -f - Set forwarding rules [client IP/MAC]
+		"fwd-rules": "10.10.1.100/32 94:6d:ae:67:4c:bc", //"192.168.200.133/32 b8:3f:d2:04:e2:54",
+		// -c - Set the number of cores
+		"num-cores": 1, // 4
+		// -l - Set the core list
+		"core-list": "7", // "0,1,2,3",
+		// -i - Set the host IPv4
+		"host-ipv4": "10.10.1.101", //"192.168.200.132",
+		"dpu-ipv4": "10.10.1.11", //was missing
+		"dpu-interface": "p0",
+		// the SF name, for which the DPU ip addr is set
+		"bow-interface": "en3f0pf0sf0",
+		"host-interface": "pf0hpf",
+		// mac of the bow interface
+		"bow-l2-address": "8e:60:7c:33:20:3b",
+		// -p - Set the host port
+		"host-port": 3232,
+		// -m - Set the maximum outstanding streams/packets that can be created
+		"max-streams": 1024,
+		// -d - Set if use DPDK
+		"use-dpdk": 1,
+	}
+}

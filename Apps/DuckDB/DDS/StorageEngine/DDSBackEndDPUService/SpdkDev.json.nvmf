@@ -1,0 +1,22 @@
+{
+  "subsystems": [
+    {
+      "subsystem": "bdev",
+      "config": [
+        {
+          "method": "bdev_nvme_attach_controller",
+          "params": {
+            "name": "nvme0",
+            "trtype": "rdma",
+            "traddr": "10.10.2.101",
+            "hostaddr": "10.10.2.201",
+            "adrfam": "ipv4",
+            "trsvcid": "4420",
+            "subnqn": "nqn.2016-06.io.spdk:bf3_malloc",
+            "hostnqn": "nqn.2016-06.io.spdk:bf3host"
+          }
+        }
+      ]
+    }
+  ]
+}

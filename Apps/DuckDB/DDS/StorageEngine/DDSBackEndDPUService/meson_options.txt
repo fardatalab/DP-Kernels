@@ -1,0 +1,3 @@
+option('SpdkLib', type : 'string', value : '/opt/dds/spdk/lib', description : 'Path to SPDK lib')
+option('SpdkInc', type : 'string', value : '/opt/dds/spdk/include', description : 'Path to SPDK header files')
+option('DpdkLib', type : 'string', value : '/opt/mellanox/dpdk/lib/aarch64-linux-gnu', description : 'Path to DPDK lib')

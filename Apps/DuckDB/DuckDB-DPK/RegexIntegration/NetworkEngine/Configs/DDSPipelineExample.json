@@ -1,0 +1,33 @@
+{
+	"doca_dpdk_flags":{
+		// -a - Add a device to the allow list.
+		"devices":[
+			{
+				"device": "sf",
+				"id": "2",
+				"sft": false
+			},
+			{
+				"device": "sf",
+				"id": "3",
+				"sft": false
+			},
+		],
+		// -c - Hexadecimal bitmask of cores to run on
+		"core-mask": "0x03",
+		// Additional DPDK (EAL) flags (if needed)
+		"flags": "",
+	},
+	"doca_general_flags":{
+		// -l - sets the log level for the application DEBUG=60 CRITICAL=20
+		"log-level": 60,
+	},
+	"doca_program_flags":{
+		// -q - Set queues number
+		"num-queues": 3,
+		// -s - Set application signature
+		"app-sig": "192.168.200.133/32:3333 192.168.200.132/32:3232 TCP",
+		// -d - Set if use DPDK
+		"use-dpdk" : 1,
+	}
+}

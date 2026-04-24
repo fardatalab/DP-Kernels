@@ -1,0 +1,4 @@
+[submodule "Apps/Faster/FASTER"]
+	path = Apps/Faster/FASTER
+	url = git@github.com:microsoft/FASTER.git
+

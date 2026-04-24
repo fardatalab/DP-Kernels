@@ -1,0 +1,3 @@
+[submodule "ThirdParty/spdk"]
+	path = ThirdParty/spdk
+	url = https://github.com/spdk/spdk.git

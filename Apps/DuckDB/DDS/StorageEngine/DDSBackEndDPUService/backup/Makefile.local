@@ -1,0 +1,88 @@
+CC=gcc
+
+SPDK_DIR=$(HOME)/spdk
+SPDK_HEADER_DIR=$(SPDK_DIR)/include
+SPDK_LIB_DIR=$(SPDK_DIR)/build/lib
+DPDK_LIB_DIR=$(SPDK_DIR)/dpdk/build/lib
+
+Include=-I../../Common/Include -I../../Common/Include/DPU -I../../StorageEngine/DDSBackEndDPUService/Include
+
+COMMON_CFLAGS=-I$(SPDK_HEADER_DIR)
+COMMON_CFLAGS+=$(Include)
+COMMON_CFLAGS+=-L$(SPDK_LIB_DIR)
+COMMON_CFLAGS+=-L$(DPDK_LIB_DIR)
+
+PKG_CONFIG_PATH = $(SPDK_LIB_DIR)/pkgconfig
+$(info PKG_CONFIG_PATH: $(PKG_CONFIG_PATH))
+
+SPDK_LIB := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs spdk_bdev)
+### DPDK_LIB := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs spdk_env_dpdk)
+
+DPDK_LIB := $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" pkg-config --libs spdk_env_dpdk)
+SPDK_EVENT_LIB := $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" pkg-config --libs spdk_event spdk_event_bdev)
+SPDK_DPDK_LIB := $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" pkg-config --libs spdk_event spdk_event_bdev spdk_env_dpdk)
+SYS_LIB := $(shell PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" pkg-config --libs --static spdk_syslibs)
+
+SYS_LIB += -lrdmacm -libverbs
+
+$(info SPDK_LIB: $(SPDK_LIB))
+$(info SPDK_EVENT_LIB: $(SPDK_EVENT_LIB))
+
+$(info DPDK_LIB: $(DPDK_LIB))
+$(info SYS_LIB: $(SYS_LIB))
+
+LDFLAGS=-L$(SPDK_LIB_DIR) -L$(DPDK_LIB_DIR)
+LDLIBS=-pthread -Wl,--no-as-needed -lspdk -lspdk_env_dpdk $(SPDK_LIB) $(DPDK_LIB) -lrdmacm -libverbs
+
+# SPDK_LIB := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs spdk_bdev)
+# DPDK_LIB := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs spdk_env_dpdk)
+# SYS_LIB := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --static spdk_syslibs)
+
+# LDLIBS=-pthread -Wl,--whole-archive $(SPDK_LIB) $(DPDK_LIB) $(SYS_LIB)
+
+# LDLIBS=-pthread -lspdk -lspdk_env_dpdk -ldpdk
+
+CFLAGS=-std=gnu11 -O3 -g
+
+PROG=TestDDS
+BUILD_DIR=./build
+SRC_COMMON=../../Common/Source
+
+SRC_DIR = Source
+SRCS = $(wildcard $(SRC_DIR)/*.c)
+SRCS += $(SRC_COMMON)/DPU/FileService.c
+SRCS += $(SRC_COMMON)/DPU/RingBufferPolling.c
+$(info SRCS: $(SRCS))
+
+OBJ = $(SRCS:%.c=$(BUILD_DIR)/%.o)
+$(info OBJ: $(OBJ))
+DEP = $(OBJ:%.o=%.d)
+
+
+all: $(PROG)
+
+$(PROG) : $(BUILD_DIR)/$(PROG)
+
+# Actual target of the binary - depends on all .o files.
+# $(CC) $(Include) $(CFLAGS) $^ -o $@ $(LDLIBS)
+$(BUILD_DIR)/$(PROG) : $(OBJ)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -Wl,-rpath=$(SPDK_LIB_DIR),--no-as-needed $^ -o $@ -lspdk $(DPDK_LIB) $(SYS_LIB)
+
+-include $(DEP)
+
+# Build target for every single object file.
+# The potential dependency on header files is covered
+# by calling `-include $(DEP)`.
+# The -MMD flags additionaly creates a .d file with
+# the same name as the .o file.
+# $(CC) $(Include) $(CFLAGS) -MMD -c $< -o $@ $(LDLIBS)
+$(BUILD_DIR)/%.o : %.c
+	$(info with -MMD: $<)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -Wl,-rpath=$(SPDK_LIB_DIR),--no-as-needed -MMD -c $< -o $@
+
+.PHONY: clean
+clean:
+	# This should remove all generated files.
+	-rm $(BUILD_DIR)/$(BIN) $(OBJ) $(DEP)

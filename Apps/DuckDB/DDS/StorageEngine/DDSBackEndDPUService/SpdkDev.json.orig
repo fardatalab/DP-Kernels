@@ -1,0 +1,17 @@
+{
+  "subsystems": [
+    {
+      "subsystem": "bdev",
+      "config": [
+        {
+          "method": "bdev_malloc_create",
+          "params": {
+            "name": "malloc_delay",
+            "num_blocks": 6291456,
+            "block_size": 512
+          }
+        }
+      ]
+    }
+  ]
+}

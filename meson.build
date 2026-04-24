@@ -1,0 +1,469 @@
+project(
+    'DPKernel',
+    'C',
+    'CPP',
+    version: '0.1.0',
+    default_options: ['buildtype=release'] #debugoptimized
+)
+
+add_project_arguments('-Wno-deprecated-declarations', language: 'cpp')
+add_project_arguments('-Wno-deprecated-declarations', language: 'c')
+add_project_arguments('-Wno-unknown-pragmas', language: 'cpp')
+# add_project_arguments('-std=c++20', language: 'cpp')
+
+
+common_dir = 'Common/'
+dpm_dir = 'DPManager/'
+kernel_dir = 'Kernels/'
+device_specific_dir = dpm_dir + 'device/'
+
+# kernels directory
+null_kernel_dir = 'Kernels/null/'
+sw_kernel_dir = 'Kernels/sw/'
+bf3v2_2_kernel_dir = 'Kernels/bf3v2.2/'
+bf3_kernel_dir = 'Kernels/bf3/'
+bf2_kernel_dir = 'Kernels/bf2/'
+all_kernels_dirs = [null_kernel_dir, sw_kernel_dir, bf3_kernel_dir, bf2_kernel_dir, bf3v2_2_kernel_dir]
+
+sw_kernel_srcs = [
+    sw_kernel_dir + 'decompress_deflate_sw.cpp',
+    sw_kernel_dir + 'regex_sw.cpp',
+    device_specific_dir + 'sw/' + 'sw_device.cpp',
+]
+
+srcs = [
+    dpm_dir + 'main.cpp',
+    dpm_dir + 'dp_manager_msgq.cpp',
+    dpm_dir + 'kernel_interface.cpp',
+    dpm_dir + 'memory.cpp',
+    dpm_dir + 'ring_buffer.cpp',
+    dpm_dir + 'scheduling.cpp',
+    dpm_dir + 'coalescing.cpp',
+    device_specific_dir + 'device_specific.cpp',
+]
+srcs += sw_kernel_srcs
+
+inc_dirs = [
+    'DPManager',
+    'DPManager/device',
+    'Common',
+    '/usr/local/include/mimalloc-1.9',
+    '/opt/mellanox/doca/include',
+]
+
+DOCA_VERSION = run_command(find_program('cat'),
+                files('/opt/mellanox/doca/applications/VERSION'), check: true).stdout().strip().split('.')
+DOCA_VERSION_STR = '.'.join(DOCA_VERSION)
+message('DOCA version: ' + DOCA_VERSION_STR)
+
+
+c_srcs = []
+
+# add the sw kernels device dir
+inc_dirs += device_specific_dir + 'sw/'
+
+# Define version-specific flags
+doca_version_defines = []
+if DOCA_VERSION[0] == '3'
+    message('assuming DOCA 3.x (BF-3)')
+    c_srcs += [common_dir + 'doca_common_v_2_5.c']
+    message('building bf3 v3.x lib')
+    inc_dirs += device_specific_dir + 'bf3/'
+elif DOCA_VERSION[0] == '2' and DOCA_VERSION[1] == '5'
+    message('assuming DOCA 2.5 (BF-3)')
+    # doca_version_defines += ['-DDOCA_VER_2_5']
+    c_srcs += [common_dir + 'doca_common_v_2_5.c']
+    message('building bf3 v2.5 lib')
+    inc_dirs += device_specific_dir + 'bf3/'
+
+elif DOCA_VERSION[0] == '2' and DOCA_VERSION[1] == '2'
+    message('assuming DOCA 2.2 (BF-3)')
+    # doca_version_defines += ['-DDOCA_VER_2_2']
+    c_srcs += [common_dir + 'doca_common_v_2_2.c']
+    message('building bf3 v2.2 lib')
+    inc_dirs += device_specific_dir + 'bf3v2.2/'
+
+elif DOCA_VERSION[0] == '1'
+    message('assuming DOCA 1.5 (BF-2)')
+    # doca_version_defines += ['-DDOCA_VER_1_5']
+    c_srcs += [common_dir + 'doca_common_v_1_5.c']
+    message('building bf2 lib')
+    inc_dirs += device_specific_dir + 'bf2/'
+else
+    error('Unknown DOCA version: ' + DOCA_VERSION[0])
+endif
+
+inc_dirs += device_specific_dir
+
+
+
+inc_dirs += all_kernels_dirs
+
+inc_dirs += [
+    'test/page_server'
+]
+
+incs = include_directories(inc_dirs)
+
+# incs += include_directories(all_kernels_dirs)
+# incs += include_directories('/usr/local/include/mimalloc-2.2')
+
+# re2_dep = meson.get_compiler('cpp').find_library('re2', dirs: '/usr/local/lib', required: true)
+re2_dep = dependency('re2', required: true)
+# absl_dep = meson.get_compiler('cpp').find_library('absl', dirs: '/usr/local/lib', required: true)
+# absl_dep = dependency('absl', required: true)
+sw_kernel_deps = [dependency('libdeflate'), re2_dep]#, absl_dep
+
+client_deps = [dependency('mimalloc'), dependency('threads'), ]
+
+deps = [
+    # dependency('boost'),
+    dependency('mimalloc'),
+    dependency('threads'),
+]
+deps += sw_kernel_deps
+
+# Add the dl library for loading device libraries
+dl_dep = meson.get_compiler('cpp').find_library('dl', required: true)
+deps += [dl_dep]
+# Add the rt library for POSIX shared memory functions like shm_open
+rt_dep = meson.get_compiler('cpp').find_library('rt', required: true)
+deps += [rt_dep]
+client_deps += [dl_dep, rt_dep]
+
+doca_regex_enabled = false
+
+# Check if DOCA is available as a single dependency (host has this), or we need to link separately (on DPU)
+doca_dep = dependency('doca', required: false)
+if doca_dep.found()
+    deps += [doca_dep]
+    message('DOCA dependency found, using -ldoca')
+    if DOCA_VERSION[0] == '3'
+        message('Skipping DOCA regex enablement for DOCA 3.x (BF-3)')
+    elif meson.get_compiler('cpp').has_header('doca_regex.h', include_directories: incs)
+        doca_regex_enabled = true
+        message('DOCA regex header detected with unified DOCA dependency')
+    else
+        warning('DOCA regex header not found; building without DOCA regex kernels')
+    endif
+else
+    doca_argp = dependency('doca-argp', required: false)
+    if doca_argp.found()
+        deps += [doca_argp]
+    else
+        warning('DOCA ARGP not found, building without DOCA support')
+    endif
+
+    doca_common = dependency('doca-common', required: false)
+    if doca_common.found()
+        deps += [doca_common]
+    else
+        warning('DOCA Common not found, building without DOCA support')
+    endif
+
+    doca_compress = dependency('doca-compress', required: false)
+    if doca_compress.found()
+        deps += [doca_compress]
+    else
+        warning('DOCA Compress not found, building without DOCA support')
+    endif
+
+    doca_aes_gcm = dependency('doca-aes-gcm', required: false)
+    if doca_aes_gcm.found()
+        deps += [doca_aes_gcm]
+    else
+        error('DOCA AES-GCM not found; TASK_AES_GCM kernel requires doca-aes-gcm')
+    endif
+
+    # Do not add doca-regex for DOCA 3.x because it's not compatible
+    if DOCA_VERSION[0] == '3'
+        message('Skipping doca-regex for DOCA 3.x (BF-3)')
+    else
+        doca_regex = dependency('doca-regex', required: false)
+        if doca_regex.found()
+            deps += [doca_regex]
+            doca_regex_enabled = true
+            message('DOCA regex dependency found')
+        else
+            warning('DOCA Regex not found, building without DOCA regex kernels')
+        endif
+    endif
+endif
+
+if doca_regex_enabled
+    add_project_arguments('-DDPK_HAS_DOCA_REGEX=1', language: 'cpp')
+    add_project_arguments('-DDPK_HAS_DOCA_REGEX=1', language: 'c')
+else
+    add_project_arguments('-DDPK_HAS_DOCA_REGEX=0', language: 'cpp')
+    add_project_arguments('-DDPK_HAS_DOCA_REGEX=0', language: 'c')
+endif
+
+doca_common_lib = static_library('doca_common_lib', c_srcs, include_directories: incs, pic: true)
+
+if DOCA_VERSION[0] == '3'
+   
+    dpm_bf3_lib = shared_module('dpm_bf3', sources: [
+        device_specific_dir + 'bf3/bf3_device.cpp',
+        # kernel_dir + 'bf3/kernels.cpp',
+        kernel_dir + 'bf3/aes_gcm_bf3.cpp',
+        kernel_dir + 'bf3/decompress_deflate_bf3.cpp',
+        kernel_dir + 'null/null_kernel.cpp',
+    ], include_directories: incs, dependencies: deps, link_with: doca_common_lib)
+
+elif DOCA_VERSION[0] == '2' and DOCA_VERSION[1] == '5'
+   
+    dpm_bf3_lib = shared_module('dpm_bf3', sources: [
+        device_specific_dir + 'bf3/bf3_device.cpp',
+        # kernel_dir + 'bf3/kernels.cpp',
+        kernel_dir + 'bf3/aes_gcm_bf3.cpp',
+        kernel_dir + 'bf3/decompress_deflate_bf3.cpp',
+        kernel_dir + 'null/null_kernel.cpp',
+    ], include_directories: incs, dependencies: deps, link_with: doca_common_lib)
+
+    # # sw kernels lib
+    # sw_kernels_dep = deps + [dependency('libdeflate')]
+    # dpm_sw_kernels_lib = shared_module('dpm_sw_kernels', sources: [
+    #     device_specific_dir + 'sw/sw_device.cpp',
+    #     sw_kernel_dir + 'decompress_deflate_sw.cpp',
+    # ], include_directories: incs, dependencies: sw_kernels_dep)
+
+
+elif DOCA_VERSION[0] == '2' and DOCA_VERSION[1] == '2'
+    bf3v2_2_sources = [
+        device_specific_dir + 'bf3v2.2/bf3v2.2_device.cpp',
+        kernel_dir + 'bf3v2.2/decompress_deflate_bf3v2.2.cpp',
+        kernel_dir + 'null/null_kernel.cpp',
+    ]
+
+    if doca_regex_enabled
+        bf3v2_2_sources += [kernel_dir + 'bf3v2.2/regex_bf3v2.2.cpp']
+    else
+        message('Building BF3 v2.2 without DOCA regex kernel support')
+    endif
+
+    dpm_bf3v2_2_lib = shared_module('dpm_bf3v2.2', sources: bf3v2_2_sources,
+        include_directories: incs, dependencies: deps, link_with: doca_common_lib)
+
+    # # sw kernels lib
+    # sw_kernels_dep = deps + [dependency('libdeflate')]
+    # dpm_sw_kernels_lib = shared_module('dpm_sw_kernels', sources: [
+    #     device_specific_dir + 'sw/sw_device.cpp',
+    #     sw_kernel_dir + 'decompress_deflate_sw.cpp',
+    # ], include_directories: incs, dependencies: sw_kernels_dep)
+
+
+elif DOCA_VERSION[0] == '1'
+    
+    dpm_bf2_lib = shared_module('dpm_bf2', sources: [
+        device_specific_dir + 'bf2/bf2_device.cpp',
+        kernel_dir + 'bf2/decompress_deflate_bf2.cpp',
+        kernel_dir + 'null/null_kernel.cpp',
+    ], include_directories: incs, dependencies: deps, link_with: doca_common_lib)
+
+    # # sw kernels lib
+    # sw_kernels_dep = deps + [dependency('libdeflate')]
+    # dpm_sw_kernels_lib = shared_module('dpm_sw_kernels', sources: [
+    #     device_specific_dir + 'sw/sw_device.cpp',
+    #     sw_kernel_dir + 'decompress_deflate_sw.cpp',
+    # ], include_directories: incs, dependencies: sw_kernels_dep)
+else
+    error('Unknown DOCA version: ' + DOCA_VERSION_STR)
+endif
+
+
+exe = executable(
+    'dp_manager',
+    srcs,
+    include_directories: incs,
+    dependencies: deps,
+    install: false,
+    link_with: doca_common_lib,
+    cpp_args: ['-std=c++17'],
+    export_dynamic: true,
+)
+
+fe_srcs = [
+    dpm_dir + 'dpm_interface.cpp',
+    dpm_dir + 'memory.cpp',
+    dpm_dir + 'ring_buffer.cpp',
+]
+dpk_fe = static_library('dpk_fe', fe_srcs, include_directories: incs, pic: true, cpp_args: ['-std=c++17'],)
+
+# Embedded runtime for in-process integration (e.g., DDS backend).
+embed_runtime_srcs = [
+    dpm_dir + 'dpk_embed_c_api.cpp',
+    dpm_dir + 'dp_manager_msgq.cpp',
+    dpm_dir + 'kernel_interface.cpp',
+    dpm_dir + 'memory.cpp',
+    dpm_dir + 'ring_buffer.cpp',
+    dpm_dir + 'scheduling.cpp',
+    dpm_dir + 'coalescing.cpp',
+    dpm_dir + 'dpm_interface.cpp',
+    device_specific_dir + 'device_specific.cpp',
+]
+embed_runtime_srcs += sw_kernel_srcs
+
+dpk_embed_runtime = shared_library(
+    'dpk_embed_runtime',
+    embed_runtime_srcs,
+    include_directories: incs,
+    dependencies: deps,
+    link_with: doca_common_lib,
+    install: false,
+    cpp_args: ['-std=c++17'],
+)
+
+# cleint = executable(
+#     'client',
+#     'test/client.cpp',
+#     dpm_dir + 'dpm_interface.cpp',
+#     dpm_dir + 'memory.cpp',
+#     include_directories: incs,
+#     dependencies: deps,
+#     install: false,
+#     link_with: doca_common_lib # TODO: ughh, REFACTOR THIS!!! NO REASON FOR FRONT END TO LINK WITH DOCA,,,,,,,,
+# )
+
+null_client = executable(
+    'null_client',
+    'test/null_kernel_client.cpp',
+    dpm_dir + 'dpm_interface.cpp',
+    dpm_dir + 'memory.cpp',
+    dpm_dir + 'ring_buffer.cpp',
+    include_directories: incs,
+    dependencies: deps,
+    install: false,
+    cpp_args: ['-std=c++17'],
+    link_with: doca_common_lib # TODO: ughh, REFACTOR THIS!!! NO REASON FOR FRONT END TO LINK WITH DOCA,,,,,,,,,,,,,,,
+)
+
+bf3_deflate_client = executable(
+    'bf3_deflate_client',
+    # Legacy sources kept for reference but intentionally not compiled:
+    # 'test/bf3_deflate_client.cpp',
+    # 'test/bf3_deflate_client_mixed.cpp',
+    'test/bf3_deflate_client_lazy.cpp',
+    # dpm_dir + 'dpm_interface.cpp',
+    # dpm_dir + 'memory.cpp',
+    # dpm_dir + 'ring_buffer.cpp',
+    include_directories: incs,
+    dependencies: deps,
+    install: false,
+    cpp_args: ['-std=c++17'],
+    link_with: [doca_common_lib, dpk_fe]
+)
+
+bf3_aes_gcm_client = executable(
+    'bf3_aes_gcm_client',
+    'test/bf3_aes_gcm_client.cpp',
+    include_directories: incs,
+    dependencies: deps,
+    install: false,
+    cpp_args: ['-std=c++17'],
+    link_with: [doca_common_lib, dpk_fe]
+)
+
+# the duckdb binary file parser
+#duckdb_parser_srcs = ['test/duckdb_regex/parser/include/decoder/decoder.cpp',
+#            'test/duckdb_regex/parser/block/metadata_block.cpp',
+#            'test/duckdb_regex/parser/block/storage_block.cpp',
+#            'test/duckdb_regex/parser/statistics/base_statistics.cpp',
+#            'test/duckdb_regex/parser/statistics/distinct_statistics.cpp',
+#            'test/duckdb_regex/parser/row_group/row_group.cpp',
+#            'test/duckdb_regex/parser/schema/schema.cpp',
+#            'test/duckdb_regex/parser/table/table.cpp',
+#            'test/duckdb_regex/parser/type_info/type_info.cpp',
+#            'test/duckdb_regex/parser/header/main_header.cpp',
+#            'test/duckdb_regex/parser/header/database_header.cpp',
+#            'test/duckdb_regex/parser/database/database.cpp',
+#            'test/duckdb_regex/regduck_api.cpp',]
+
+duckdb_parser_srcs = ['test/Parser/src/include/decoder/decoder.cpp',
+            'test/Parser/src/block/metadata_block.cpp',
+            'test/Parser/src/block/storage_block.cpp',
+            'test/Parser/src/statistics/base_statistics.cpp',
+            'test/Parser/src/statistics/distinct_statistics.cpp',
+            'test/Parser/src/row_group/row_group.cpp',
+            'test/Parser/src/schema/schema.cpp',
+            'test/Parser/src/table/table.cpp',
+            'test/Parser/src/type_info/type_info.cpp',
+            'test/Parser/src/header/main_header.cpp',
+            'test/Parser/src/header/database_header.cpp',
+            'test/Parser/src/database/database.cpp',
+            'test/Parser/src/interface.cpp',]            
+
+#duckdb_parser_incs = include_directories(
+#    'test/duckdb_regex',
+#    'test/duckdb_regex/parser',
+#    'test/duckdb_regex/parser/include',
+#)
+# duckdb_parser_incs = include_directories(
+#     'test/Parser',
+#     'test/Parser/src',
+#     'test/Parser/src/include',
+# )
+
+
+# duckdb_parser_lib = static_library(
+#     'duckdb_parser_lib',
+#     duckdb_parser_srcs,
+#     include_directories: duckdb_parser_incs,
+#     dependencies: deps,
+#     install: false,
+#     cpp_args: ['-std=c++17'],
+# )
+
+
+# bf3_regex_client = executable(
+#     'bf3_regex_client',
+#     'test/regex_app.cpp',
+#     dpm_dir + 'dpm_interface.cpp',
+#     dpm_dir + 'memory.cpp',
+#     dpm_dir + 'ring_buffer.cpp',
+#     include_directories: incs,
+#     dependencies: client_deps,
+#     install: false,
+#     cpp_args: ['-std=c++17'],
+#     link_with: [doca_common_lib, duckdb_parser_lib],
+#     # link_with: [doca_common_lib],
+# )
+
+# page_server_dep = client_deps + [dependency('libdeflate'), doca_dep]
+# page_server_client = executable(
+#     'page_client',
+#     'test/page_server/client.cpp',
+#     'test/page_server/net_hashmap.cpp',
+#     dpm_dir + 'dpm_interface.cpp',
+#     dpm_dir + 'memory.cpp',
+#     dpm_dir + 'ring_buffer.cpp',
+#     include_directories: incs,
+#     dependencies: page_server_dep,
+#     install: false,
+#     cpp_args: ['-std=c++17'],
+# )
+
+# page_server = executable(
+#     'page_server',
+#     'test/page_server/server.cpp',
+#     'test/page_server/net_hashmap.cpp',
+#     dpm_dir + 'dpm_interface.cpp',
+#     dpm_dir + 'memory.cpp',
+#     dpm_dir + 'ring_buffer.cpp',
+#     include_directories: incs,
+#     dependencies: page_server_dep,
+#     install: false,
+#     cpp_args: ['-std=c++17'],
+# )
+
+# page_serer_dpkernel = executable(
+#     'page_server_dpk',
+#     'test/page_server/server.cpp',
+#     'test/page_server/net_hashmap_dpk.cpp',
+#     dpm_dir + 'dpm_interface.cpp',
+#     dpm_dir + 'memory.cpp',
+#     dpm_dir + 'ring_buffer.cpp',
+#     include_directories: incs,
+#     dependencies: page_server_dep,
+#     install: false,
+#     cpp_args: ['-std=c++17'],
+# )
